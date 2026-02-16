@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nainai's bear</title>
+    <style>
+        body {
+            margin: 0; padding: 0; overflow: hidden;
+            background-color: #000;
+            display: flex; flex-direction: column; align-items: center;
+            font-family: 'Microsoft YaHei', sans-serif;
+        }
+        #ui { 
+            padding: 20px; font-size: 55px; font-weight: bold; 
+            color: #ffffff; 
+            text-shadow: 3px 3px 6px rgba(0,0,0,0.8);
+            z-index: 100; transition: opacity 2s;
+        }
+        /* 游戏容器 */
+        #gameWrapper { 
+            position: relative; width: 800px; height: 600px; 
+            border-radius: 15px; overflow: hidden; transition: opacity 2s;
+            background: #fff;
+            z-index: 50; /* 确保游戏层级 */
+        }
+        #gameBackground {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background-image: url('back.jpg'); background-size: cover;
+            background-position: center; filter: blur(5px) brightness(0.7); z-index: 1;
+        }
+        canvas { position: relative; display: block; z-index: 2; background: transparent; }
+        #bearSprite { position: absolute; width: 120px; height: 120px; pointer-events: none; z-index: 10; }
+
+        /* 视频容器 - 修改了位置和层级 */
+        #videoContainer {
+            position: fixed; /* 改为 fixed 覆盖全屏 */
+            top: 0; left: 0; width: 100%; height: 100%;
+            display: none; opacity: 0; transition: opacity 2s;
+            z-index: 2000; /* 确保视频在最上层 */
+            background: black;
+        }
+        #endVideo { width: 100%; height: 100%; object-fit: contain; }
+
+        #startOverlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.95);
+            display: flex; justify-content: center; align-items: center;
+            z-index: 1000;
+        }
+        #startBtn {
+            padding: 20px 40px; font-size: 28px; font-weight: bold;
+            color: white; 
+            background-color: #007bff; 
+            border: none; border-radius: 50px; cursor: pointer;
+            box-shadow: 0 5px 15px rgba(0, 123, 255, 0.4);
+            transition: transform 0.2s, background-color 0.2s;
+        }
+        #startBtn:hover { transform: scale(1.1); background-color: #0056b3; }
+    </style>
+</head>
+<body>
+
+<div id="ui"><span id="score">0</span></div>
+
+<div id="gameWrapper">
+    <div id="startOverlay">
+        <button id="startBtn">点击进入奈奈王国</button>
+    </div>
+
+    <div id="gameBackground"></div>
+    <canvas id="gameCanvas"></canvas>
+    <img id="bearSprite" src="music.gif">
+</div>
+
+<div id="videoContainer">
+    <video id="endVideo" playsinline>
+        <source src="video.mp4" type="video/mp4">
+    </video>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreElement = document.getElementById('score');
+    const bearImg = document.getElementById('bearSprite');
+    const startOverlay = document.getElementById('startOverlay');
+    const startBtn = document.getElementById('startBtn');
+    const gameWrapper = document.getElementById('gameWrapper');
+    const videoContainer = document.getElementById('videoContainer');
+    const endVideo = document.getElementById('endVideo');
+    const uiDiv = document.getElementById('ui');
+
+    canvas.width = 800; canvas.height = 600;
+
+    let score = 0;
+    let isVictory = false;
+    let isTransitioning = false; // 新增：防止动画重复触发
+    let gameStarted = false;
+    let spriteTimer = null;
+    let fallItems = [];
+
+    const bgm = new Audio('first music.MP3');
+    bgm.loop = true;
+
+    const config = { gravity: 0.8, jumpPower: -18, moveSpeed: 10 };
+    const bear = { x: 340, y: 480, width: 120, height: 120, vx: 0, vy: 0, isJumping: false };
+
+    const itemPool = [
+        { char: '🍙', sprite: 'yes.gif' }, { char: '🍣', sprite: 'yes.gif' },
+        { char: '📦', sprite: 'jump.gif' }, { char: '🎁', sprite: 'jump.gif' },
+        { char: '🔔', sprite: 'two.gif' }, { char: '💎', sprite: 'two.gif' }
+    ];
+
+    const keys = { left: false, right: false, up: false };
+
+    startBtn.addEventListener('click', () => {
+        gameStarted = true;
+        startOverlay.style.display = 'none';
+        bgm.play().catch(e => console.log("音频播放失败:", e));
+        endVideo.load(); 
+        draw();
+    });
+
+    window.addEventListener('keydown', e => {
+        if (e.key === 'ArrowLeft') keys.left = true;
+        if (e.key === 'ArrowRight') keys.right = true;
+        if (e.key === 'ArrowUp' || e.key === ' ') keys.up = true;
+    });
+    window.addEventListener('keyup', e => {
+        if (e.key === 'ArrowLeft') keys.left = false;
+        if (e.key === 'ArrowRight') keys.right = false;
+        if (e.key === 'ArrowUp' || e.key === ' ') keys.up = false;
+    });
+
+    function changeBearSprite(newSrc) {
+        if (isVictory) return;
+        if (spriteTimer) clearTimeout(spriteTimer);
+        bearImg.src = newSrc;
+        spriteTimer = setTimeout(() => { 
+            if (!isVictory) bearImg.src = 'music.gif'; 
+            spriteTimer = null;
+        }, 2000);
+    }
+
+    function triggerFinalSequence() {
+        // 第一阶段：淡出游戏界面
+        setTimeout(() => {
+            gameWrapper.style.opacity = '0'; // 修正：直接设为0完全透明
+            uiDiv.style.opacity = '0';
+        }, 8000);
+
+        // 第二阶段：隐藏游戏界面，显示并播放视频
+        setTimeout(() => {
+            bgm.pause();
+            gameWrapper.style.display = 'none'; 
+            uiDiv.style.display = 'none';
+            videoContainer.style.display = 'block';
+            
+            // 强制重绘以确保display:block生效后再过渡opacity
+            setTimeout(() => {
+                videoContainer.style.opacity = '1';
+                endVideo.play().catch(err => {
+                    console.log("自动播放被拦截，尝试静音播放");
+                    endVideo.muted = true;
+                    endVideo.play();
+                });
+            }, 100);
+            
+        }, 10000);
+    }
+
+    function update() {
+        if (isVictory && isTransitioning) return; // 胜利后停止更新逻辑
+
+        // 移动
+        if (keys.left) { bear.vx = -config.moveSpeed; bearImg.style.transform = 'scaleX(-1)'; }
+        else if (keys.right) { bear.vx = config.moveSpeed; bearImg.style.transform = 'scaleX(1)'; }
+        else { bear.vx = 0; }
+
+        bear.x += bear.vx;
+        if (keys.up && !bear.isJumping) { bear.vy = config.jumpPower; bear.isJumping = true; }
+        bear.vy += config.gravity; bear.y += bear.vy;
+
+        // 边界处理
+        if (bear.y > canvas.height - bear.height) { bear.y = canvas.height - bear.height; bear.vy = 0; bear.isJumping = false; }
+        if (bear.x < 0) bear.x = 0;
+        if (bear.x > canvas.width - bear.width) bear.x = canvas.width - bear.width;
+
+        bearImg.style.left = bear.x + 'px';
+        bearImg.style.top = bear.y + 'px';
+
+        // 物品掉落逻辑
+        for (let i = fallItems.length - 1; i >= 0; i--) {
+            let item = fallItems[i];
+            item.y += item.speed;
+
+            // 碰撞检测
+            if (item.y + 40 > bear.y && item.x > bear.x - 20 && item.x < bear.x + bear.width) {
+                if (!isVictory) {
+                    score += 27;
+                    let displayScore = Math.min(score, 523);
+                    scoreElement.innerText = displayScore;
+
+                    if (displayScore >= 523) {
+                        isVictory = true;
+                        
+                        // 修复：确保只触发一次转场逻辑
+                        if (!isTransitioning) {
+                            isTransitioning = true;
+                            if (spriteTimer) clearTimeout(spriteTimer);
+                            bearImg.src = 'celebrate.gif';
+                            triggerFinalSequence();
+                        }
+                    } else {
+                        changeBearSprite(item.targetSprite);
+                    }
+                }
+                fallItems.splice(i, 1);
+                continue;
+            }
+
+            if (item.y > canvas.height) {
+                fallItems.splice(i, 1);
+            }
+        }
+
+        if (!isVictory && Math.random() < 0.015) {
+            const proto = itemPool[Math.floor(Math.random() * itemPool.length)];
+            fallItems.push({ 
+                x: Math.random() * (canvas.width - 40), 
+                y: -50, 
+                char: proto.char, 
+                targetSprite: proto.sprite, 
+                speed: 3 + Math.random() * 2 
+            });
+        }
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // 如果正在转场但还没有完全切换视频，保持最后一帧的绘制或清空
+        if (!isTransitioning || (isTransitioning && gameWrapper.style.display !== 'none')) {
+            ctx.shadowColor = "white"; ctx.shadowBlur = 7; ctx.fillStyle = "black"; ctx.font = '40px Arial';
+            fallItems.forEach(item => { ctx.fillText(item.char, item.x, item.y); });
+            ctx.shadowBlur = 0;
+            update();
+        }
+        
+        requestAnimationFrame(draw);
+    }
+</script>
+</body>
+</html>
